@@ -49,11 +49,53 @@ class GithubLoginState extends State<GithubLoginWidget> {
             onPressed: () async {
               await _redirectServer?.close();
               _redirectServer = await HttpServer.bind('localhost', 0);
-              //var authenticatedHttpClient = await _get
+              var authenticatedHttpClient = await getOAuth2Client(
+                  Uri.parse('http://localhost:${_redirectServer!.port}/auth'));
+              setState(() {
+                _client = authenticatedHttpClient;
+              });
             },
             child: const Text('Login to Github'),
           ),
         ));
+  }
+
+  Future<oauth2.Client> getOAuth2Client(Uri redirectUrl) async {
+    if (widget.githubClientId.isEmpty || widget.githubClientSecret.isEmpty) {
+      throw const GithubLoginException(
+          'githubClientId and githubClientSecret must be not empty. '
+          'See `lib/github_oauth_credentials.dart` for more detail.');
+    }
+    var grant = oauth2.AuthorizationCodeGrant(
+        widget.githubClientId, authorisationEndpoint, tokenEndpoint,
+        secret: widget.githubClientSecret,
+        httpClient: JsonAcceptingHttpClient());
+    var authorisationUrl =
+        grant.getAuthorizationUrl(redirectUrl, scopes: widget.githubScopes);
+    await redirect(authorisationUrl);
+    var responseQueryParameters = await listen();
+    var client =
+        await grant.handleAuthorizationResponse(responseQueryParameters);
+    return client;
+  }
+
+  Future<void> redirect(Uri authorisationUrl) async {
+    if (await canLaunchUrl(authorisationUrl)) {
+      await launchUrl(authorisationUrl);
+    } else {
+      throw GithubLoginException('Could not launch $authorisationUrl');
+    }
+  }
+
+  Future<Map<String, String>> listen() async {
+    var request = await _redirectServer!.first;
+    var params = request.uri.queryParameters;
+    request.response.statusCode = 200;
+    request.response.headers.set('content-type', 'text/plain');
+    request.response.writeln('Authenticated! You can close this tab.');
+    await request.response.close();
+    await _redirectServer!.close();
+    return params;
   }
 }
 
